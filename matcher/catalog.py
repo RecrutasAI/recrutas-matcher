@@ -40,9 +40,14 @@ def catalog(state: Path, recrutas: dict) -> dict:
     rec_links = set(recrutas.get("link_keys", []))
     companies = {c.strip().lower() for c in recrutas.get("companies", [])}
     fleet_links = set()
-    for batch in pq.ParquetFile(state).iter_batches(batch_size=100_000, columns=["url", "company_name", "closed_at", "is_us"]):
+    f = pq.ParquetFile(state)
+    cols = [c for c in ("url", "company_name", "closed_at", "is_us", "duplicate_of") if c in f.schema_arrow.names]
+    for batch in f.iter_batches(batch_size=100_000, columns=cols):
         t = pa.Table.from_batches([batch])
-        t = t.filter(pc.and_(pc.is_null(t.column("closed_at")), pc.fill_null(pc.equal(t.column("is_us"), True), False)))
+        keep = pc.and_(pc.is_null(t.column("closed_at")), pc.fill_null(pc.equal(t.column("is_us"), True), False))
+        if "duplicate_of" in t.column_names:  # the Fleet marks a job repeated by a second board (2026-10-11)
+            keep = pc.and_(keep, pc.is_null(t.column("duplicate_of")))
+        t = t.filter(keep)
         for url, co in zip(t.column("url").to_pylist(), t.column("company_name").to_pylist()):
             name = (co or "").strip()
             if not name or name.lower() in third or unnamed.search(name):
