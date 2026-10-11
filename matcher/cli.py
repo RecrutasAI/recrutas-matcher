@@ -9,12 +9,14 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .catalog import catalog
 from .match import run
 
 JOBS_DATASET = os.environ.get("JOBS_DATASET", "recrutas/us-jobs")
 MATCHER_DATASET = os.environ.get("MATCHER_DATASET", "recrutas/matcher")
 INBOX = "inbox/candidates.json"
 OUTBOX = "outbox/latest.json.gz"
+LINKS = "inbox/recrutas-links.json.gz"
 
 
 def main() -> int:
@@ -27,6 +29,13 @@ def main() -> int:
     vectors = Path(hf_hub_download(JOBS_DATASET, "vectors/jobs.parquet", repo_type="dataset"))
     state = Path(hf_hub_download(JOBS_DATASET, "state/jobs.parquet", repo_type="dataset"))
     result = run(vectors, state, inbox)
+    # The homepage's deduplicated count, when the server sent its own direct links.
+    try:
+        links = Path(hf_hub_download(MATCHER_DATASET, LINKS, repo_type="dataset", force_download=True))
+        with gzip.open(links, "rt", encoding="utf-8") as f:
+            result["stats"]["catalog"] = catalog(state, json.load(f))
+    except Exception as e:  # noqa: BLE001 -- never block matching on the count
+        print(f"catalog count skipped: {type(e).__name__}")
     print(json.dumps(result["stats"]))
     out = Path(tempfile.mkdtemp()) / "latest.json.gz"
     payload = {"generated_at": datetime.now(UTC).isoformat(), "inbox_exported_at": inbox.get("exported_at"),
