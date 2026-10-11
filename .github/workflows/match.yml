@@ -5,7 +5,7 @@ name: Match
 # small files. Logs carry counts only; no user data or job data is printed or uploaded as an artifact.
 on:
   schedule:
-    - cron: "0 2,6,10,14,18,22 * * *"
+    - cron: "13 2,6,10,14,18,22 * * *"   # off the top of the hour: GitHub delays or drops :00 schedules
   workflow_dispatch:
     inputs:
       dry_run:
