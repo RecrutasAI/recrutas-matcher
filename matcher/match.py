@@ -19,9 +19,9 @@ TOP_K = 200
 JOB_COLUMNS = ["job_id", "title", "company_name", "location", "description", "url", "apply_url", "ats", "posted_at",
                "is_remote", "salary_min", "salary_max", "salary_currency", "closed_at", "is_us"]
 
-# A first cut only; Recrutas's feed re-applies its own lists (server/storage.ts), which are the authority.
-REPOSTERS = {"jobgether", "nexthire", "bluelight consulting", "crisp recruit", "seasoned recruitment",
-             "talent software services", "horizontal talent"}
+# Staffing agencies are kept: Recrutas labels them third-party and shows them only when a person has
+# no direct matches (server/lib/third-party.ts). Links that point at a job board are dropped here,
+# since they would carry an ATS source into Recrutas.
 JOB_BOARD_HOSTS = re.compile(r"(linkedin|indeed|glassdoor|ziprecruiter|monster|simplyhired|dice|careerbuilder|wellfound|"
                              r"builtin|jooble|adzuna|talent|jobgether|google|hiring\.?cafe|otta)\.(com|org|cafe)", re.IGNORECASE)
 
@@ -68,13 +68,11 @@ def job_rows(state: Path, wanted: set[str]) -> dict[str, dict]:
 
 
 def first_cut(row: dict) -> bool:
-    """Open, US, a real link, not a known reposter."""
+    """Open, US, a link that isn't a job board's."""
     if row.get("closed_at") is not None or row.get("is_us") is not True:
         return False
     link = row.get("url") or row.get("apply_url") or ""
-    if not link.startswith("http") or JOB_BOARD_HOSTS.search(link):
-        return False
-    return (row.get("company_name") or "").strip().lower() not in REPOSTERS
+    return link.startswith("http") and not JOB_BOARD_HOSTS.search(link)
 
 
 def run(vectors: Path, state: Path, inbox: dict, k: int = TOP_K) -> dict:

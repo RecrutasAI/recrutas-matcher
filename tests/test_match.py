@@ -49,7 +49,7 @@ def test_run_sends_matches_with_vectors_and_reports_closed(tmp_path: Path):
     inbox = {"candidates": [{"pid": "p1", "v": unit(0)}, {"pid": "bad", "v": [1.0]}], "held": ["old1", "gone", "j4"]}
     out = M.run(vectors, state, inbox, k=4)
     sent = {j["job_id"]: j for j in out["jobs"]}
-    assert set(sent) == {"j1", "j4"}                              # reposter and job-board link dropped
+    assert set(sent) == {"j1", "j2", "j4"}                        # agency kept (labeled by Recrutas); job-board link dropped
     assert len(sent["j1"]["vector"]) == DIM and "closed_at" not in sent["j1"]
     assert out["closed"] == ["gone", "old1"]                      # held jobs now closed or missing
     assert out["stats"]["users"] == 1                              # a malformed vector is ignored
