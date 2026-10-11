@@ -19,13 +19,31 @@ OUTBOX = "outbox/latest.json.gz"
 LINKS = "inbox/recrutas-links.json"
 
 
+def already_matched(inbox: dict, outbox_inbox_exported_at: str | None) -> bool:
+    """The outbox was made from this very inbox (a second scheduled slot after a run that did happen)."""
+    return bool(inbox.get("exported_at")) and inbox.get("exported_at") == outbox_inbox_exported_at
+
+
 def main() -> int:
     from huggingface_hub import HfApi, hf_hub_download
+    from huggingface_hub.errors import EntryNotFoundError
     p = argparse.ArgumentParser()
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--if-new", action="store_true", help="skip when the outbox already matches this inbox")
     args = p.parse_args()
 
     inbox = json.loads(Path(hf_hub_download(MATCHER_DATASET, INBOX, repo_type="dataset", force_download=True)).read_text())
+    if args.if_new:
+        # GitHub drops some scheduled runs, so each cycle has two slots; the second exits here
+        # when the first already ran.
+        try:
+            with gzip.open(hf_hub_download(MATCHER_DATASET, OUTBOX, repo_type="dataset", force_download=True), "rt", encoding="utf-8") as f:
+                done = json.load(f).get("inbox_exported_at")
+        except EntryNotFoundError:
+            done = None
+        if already_matched(inbox, done):
+            print("outbox already matches this inbox; nothing to do")
+            return 0
     vectors = Path(hf_hub_download(JOBS_DATASET, "vectors/jobs.parquet", repo_type="dataset"))
     state = Path(hf_hub_download(JOBS_DATASET, "state/jobs.parquet", repo_type="dataset"))
     result = run(vectors, state, inbox)

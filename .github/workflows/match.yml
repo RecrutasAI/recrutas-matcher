@@ -5,7 +5,10 @@ name: Match
 # small files. Logs carry counts only; no user data or job data is printed or uploaded as an artifact.
 on:
   schedule:
-    - cron: "13 2,6,10,14,18,22 * * *"   # off the top of the hour: GitHub delays or drops :00 schedules
+    # Two slots per cycle, off the top of the hour: GitHub delays or drops scheduled runs (the 06:00
+    # and 14:13 runs on 2026-10-11 never started). The second slot exits at once if the first ran.
+    - cron: "13 2,6,10,14,18,22 * * *"
+    - cron: "43 2,6,10,14,18,22 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -34,4 +37,4 @@ jobs:
       - name: Match
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: python -m matcher.cli ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: python -m matcher.cli ${{ github.event_name == 'schedule' && '--if-new' || '' }} ${{ inputs.dry_run && '--dry-run' || '' }}

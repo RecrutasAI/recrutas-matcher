@@ -53,3 +53,10 @@ def test_run_sends_matches_with_vectors_and_reports_closed(tmp_path: Path):
     assert len(sent["j1"]["vector"]) == DIM and "closed_at" not in sent["j1"]
     assert out["closed"] == ["gone", "old1"]                      # held jobs now closed or missing
     assert out["stats"]["users"] == 1                              # a malformed vector is ignored
+
+
+def test_second_slot_skips_only_an_already_matched_inbox():
+    from matcher.cli import already_matched
+    assert already_matched({"exported_at": "2026-10-11T17:50:06Z"}, "2026-10-11T17:50:06Z")
+    assert not already_matched({"exported_at": "2026-10-11T21:50:06Z"}, "2026-10-11T17:50:06Z")
+    assert not already_matched({}, None)
