@@ -16,7 +16,7 @@ JOBS_DATASET = os.environ.get("JOBS_DATASET", "recrutas/us-jobs")
 MATCHER_DATASET = os.environ.get("MATCHER_DATASET", "recrutas/matcher")
 INBOX = "inbox/candidates.json"
 OUTBOX = "outbox/latest.json.gz"
-LINKS = "inbox/recrutas-links.json.gz"
+LINKS = "inbox/recrutas-links.json"
 
 
 def main() -> int:
@@ -32,8 +32,7 @@ def main() -> int:
     # The homepage's deduplicated count, when the server sent its own direct links.
     try:
         links = Path(hf_hub_download(MATCHER_DATASET, LINKS, repo_type="dataset", force_download=True))
-        with gzip.open(links, "rt", encoding="utf-8") as f:
-            result["stats"]["catalog"] = catalog(state, json.load(f))
+        result["stats"]["catalog"] = catalog(state, json.loads(links.read_text(encoding="utf-8")))
     except Exception as e:  # noqa: BLE001 -- never block matching on the count
         print(f"catalog count skipped: {type(e).__name__}")
     print(json.dumps(result["stats"]))

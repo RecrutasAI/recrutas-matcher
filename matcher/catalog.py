@@ -6,6 +6,7 @@ pattern), so both sides count the same way. Links are compared after the Fleet's
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -28,13 +29,16 @@ def canonical_url(url: str | None) -> str:
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, urlencode(sorted(query)), ""))
 
 
+def link_key(url: str | None) -> str:
+    """Same as Recrutas's server/lib/canonical-url.ts linkKey: 16 hex chars of SHA-1 of the canonical link."""
+    return hashlib.sha1(canonical_url(url).encode("utf-8")).hexdigest()[:16]
+
+
 def catalog(state: Path, recrutas: dict) -> dict:
     third = {n.strip().lower() for n in recrutas.get("third_party_companies", [])}
     unnamed = re.compile(recrutas.get("unnamed_employer") or r"(?!)", re.IGNORECASE)
-    rec_links, companies = set(), set()
-    for url, company in recrutas.get("links", []):
-        rec_links.add(canonical_url(url))
-        companies.add((company or "").strip().lower())
+    rec_links = set(recrutas.get("link_keys", []))
+    companies = {c.strip().lower() for c in recrutas.get("companies", [])}
     fleet_links = set()
     for batch in pq.ParquetFile(state).iter_batches(batch_size=100_000, columns=["url", "company_name", "closed_at", "is_us"]):
         t = pa.Table.from_batches([batch])
@@ -43,10 +47,11 @@ def catalog(state: Path, recrutas: dict) -> dict:
             name = (co or "").strip()
             if not name or name.lower() in third or unnamed.search(name):
                 continue
-            fleet_links.add(canonical_url(url))
+            fleet_links.add(link_key(url))
             companies.add(name.lower())
-    rec_links.discard("")
-    fleet_links.discard("")
+    empty = link_key("")
+    rec_links.discard(empty)
+    fleet_links.discard(empty)
     companies.discard("")
     return {"jobs": len(rec_links | fleet_links), "companies": len(companies), "recrutas": len(rec_links),
             "fleet": len(fleet_links), "both": len(rec_links & fleet_links)}
