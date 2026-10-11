@@ -30,3 +30,12 @@ def test_link_key_matches_recrutas():
     # Recrutas computes linkKey('https://jobs.lever.co/acme/1') in TypeScript; same bytes here.
     import hashlib
     assert link_key("https://jobs.lever.co/acme/1/?utm_source=li") == hashlib.sha1(b"https://jobs.lever.co/acme/1").hexdigest()[:16]
+
+
+def test_a_job_marked_duplicate_is_counted_once(tmp_path: Path):
+    state = tmp_path / "s.parquet"
+    pq.write_table(pa.Table.from_pylist([
+        {"url": "https://acme/sites/CX_1/job/7", "company_name": "Acme", "closed_at": None, "is_us": True, "duplicate_of": None},
+        {"url": "https://acme/sites/CX_2/job/7", "company_name": "Acme", "closed_at": None, "is_us": True, "duplicate_of": "j1"},
+    ]), state)
+    assert catalog(state, {})["fleet"] == 1

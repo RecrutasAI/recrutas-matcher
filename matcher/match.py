@@ -59,7 +59,9 @@ def top_k(users: np.ndarray, jobs: np.ndarray, allowed: np.ndarray, k: int = TOP
 def job_rows(state: Path, wanted: set[str]) -> dict[str, dict]:
     """Current state rows for the wanted job ids (streamed: the state file is large)."""
     rows: dict[str, dict] = {}
-    for batch in pq.ParquetFile(state).iter_batches(batch_size=50_000, columns=JOB_COLUMNS):
+    f = pq.ParquetFile(state)
+    cols = [c for c in JOB_COLUMNS + ["duplicate_of"] if c in f.schema_arrow.names]
+    for batch in f.iter_batches(batch_size=50_000, columns=cols):
         t = pa.Table.from_batches([batch])
         hit = t.filter(pc.is_in(t.column("job_id"), value_set=pa.array(list(wanted), pa.string())))
         for r in hit.to_pylist():
@@ -68,8 +70,8 @@ def job_rows(state: Path, wanted: set[str]) -> dict[str, dict]:
 
 
 def first_cut(row: dict) -> bool:
-    """Open, US, a link that isn't a job board's."""
-    if row.get("closed_at") is not None or row.get("is_us") is not True:
+    """Open, US, one copy of the job (not marked duplicate_of), a link that isn't a job board's."""
+    if row.get("closed_at") is not None or row.get("is_us") is not True or row.get("duplicate_of"):
         return False
     link = row.get("url") or row.get("apply_url") or ""
     return link.startswith("http") and not JOB_BOARD_HOSTS.search(link)
@@ -89,7 +91,7 @@ def run(vectors: Path, state: Path, inbox: dict, k: int = TOP_K) -> dict:
         r = rows.get(jid)
         if r is None or not first_cut(r):
             continue
-        r = {key: (val.isoformat() if hasattr(val, "isoformat") else val) for key, val in r.items() if key not in ("closed_at", "is_us")}
+        r = {key: (val.isoformat() if hasattr(val, "isoformat") else val) for key, val in r.items() if key not in ("closed_at", "is_us", "duplicate_of")}
         r["vector"] = [round(float(x), 5) for x in jobs[index[jid]]]
         out_jobs.append(r)
     closed = sorted(j for j in held if j not in rows or rows[j].get("closed_at") is not None or rows[j].get("is_us") is not True)
