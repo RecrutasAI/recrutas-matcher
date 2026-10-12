@@ -19,10 +19,10 @@ from .catalog import link_key
 # Same as Recrutas server/lib/ats-job-key.ts VENDOR_ID_PATTERNS.
 VENDOR_ID_PATTERNS = {
     "greenhouse": [re.compile(r"[?&]gh_jid=(\d+)"), re.compile(r"greenhouse\.io/[^/]+/jobs/(\d+)")],
-    "lever": [re.compile(r"jobs\.lever\.co/[^/]+/([0-9a-f-]{36})", re.I)],
-    "ashby": [re.compile(r"jobs\.ashbyhq\.com/[^/]+/([0-9a-f-]{36})", re.I)],
+    "lever": [re.compile(r"jobs\.lever\.co/[^/]+/([0-9a-f-]{36})", re.IGNORECASE)],
+    "ashby": [re.compile(r"jobs\.ashbyhq\.com/[^/]+/([0-9a-f-]{36})", re.IGNORECASE)],
     "smartrecruiters": [re.compile(r"smartrecruiters\.com/[^/]+/(\d+)")],
-    "breezy": [re.compile(r"\.breezy\.hr/p/([0-9a-f]{12})", re.I)],
+    "breezy": [re.compile(r"\.breezy\.hr/p/([0-9a-f]{12})", re.IGNORECASE)],
     "workable": [re.compile(r"/j/([0-9A-Za-z]+)")],
     "recruitee": [re.compile(r"recruitee\.com/o/([^/?#]+)")],
 }
