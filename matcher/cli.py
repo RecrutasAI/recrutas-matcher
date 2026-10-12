@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .catalog import catalog
+from .dates import posting_dates
 from .match import run
 
 JOBS_DATASET = os.environ.get("JOBS_DATASET", "recrutas/us-jobs")
@@ -48,15 +49,20 @@ def main() -> int:
     state = Path(hf_hub_download(JOBS_DATASET, "state/jobs.parquet", repo_type="dataset"))
     result = run(vectors, state, inbox)
     # The homepage's deduplicated count, when the server sent its own direct links.
+    dates: dict[str, str] = {}
     try:
-        links = Path(hf_hub_download(MATCHER_DATASET, LINKS, repo_type="dataset", force_download=True))
-        result["stats"]["catalog"] = catalog(state, json.loads(links.read_text(encoding="utf-8")))
-    except Exception as e:  # noqa: BLE001 -- never block matching on the count
-        print(f"catalog count skipped: {type(e).__name__}")
+        links_doc = json.loads(Path(hf_hub_download(MATCHER_DATASET, LINKS, repo_type="dataset", force_download=True)).read_text(encoding="utf-8"))
+        result["stats"]["catalog"] = catalog(state, links_doc)
+        # The Fleet's posting dates for Recrutas's undated jobs.
+        asked_jobs, asked_links = set(links_doc.get("undated_job_keys", [])), set(links_doc.get("undated_link_keys", []))
+        dates = posting_dates(state, asked_jobs, asked_links)
+        result["stats"]["dates"] = {"asked": len(asked_jobs) + len(asked_links), "found": len(dates)}
+    except Exception as e:  # noqa: BLE001 -- never block matching on the count or the dates
+        print(f"catalog count / dates skipped: {type(e).__name__}")
     print(json.dumps(result["stats"]))
     out = Path(tempfile.mkdtemp()) / "latest.json.gz"
     payload = {"generated_at": datetime.now(UTC).isoformat(), "inbox_exported_at": inbox.get("exported_at"),
-               "jobs": result["jobs"], "closed": result["closed"], "stats": result["stats"]}
+               "jobs": result["jobs"], "closed": result["closed"], "dates": dates, "stats": result["stats"]}
     with gzip.open(out, "wt", encoding="utf-8") as f:
         json.dump(payload, f)
     print(f"outbox: {out.stat().st_size // 1024} KB")
