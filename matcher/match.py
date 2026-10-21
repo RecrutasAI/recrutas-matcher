@@ -17,7 +17,7 @@ import pyarrow.parquet as pq
 
 TOP_K = 200
 JOB_COLUMNS = ["job_id", "title", "company_name", "location", "description", "url", "apply_url", "ats", "posted_at",
-               "is_remote", "salary_min", "salary_max", "salary_currency", "closed_at", "is_us"]
+               "is_remote", "salary_min", "salary_max", "salary_currency", "closed_at", "is_us", "last_seen"]
 
 # Staffing agencies are kept: Recrutas labels them third-party and shows them only when a person has
 # no direct matches (server/lib/third-party.ts). Links that point at a job board are dropped here,
@@ -77,6 +77,21 @@ def first_cut(row: dict) -> bool:
     return link.startswith("http") and not JOB_BOARD_HOSTS.search(link)
 
 
+def iso(v) -> str | None:
+    return v.isoformat() if hasattr(v, "isoformat") else v
+
+
+def closure(job_id: str, row: dict | None) -> dict:
+    """Why a shown job closed. Only "taken_down" is a takedown: the Fleet sets closed_at when the job
+    is missing from a successful read of its board. A job gone from the catalog or no longer US closed
+    for other reasons, and Recrutas mustn't tell anyone it was taken down."""
+    if row is None:
+        return {"id": job_id, "reason": "missing"}
+    if row.get("closed_at") is not None:
+        return {"id": job_id, "reason": "taken_down", "at": iso(row["closed_at"])}
+    return {"id": job_id, "reason": "not_us"}
+
+
 def run(vectors: Path, state: Path, inbox: dict, k: int = TOP_K) -> dict:
     ids, jobs = load_vectors(vectors)
     pids, users = candidate_matrix(inbox.get("candidates", []), jobs.shape[1])
@@ -91,10 +106,11 @@ def run(vectors: Path, state: Path, inbox: dict, k: int = TOP_K) -> dict:
         r = rows.get(jid)
         if r is None or not first_cut(r):
             continue
-        r = {key: (val.isoformat() if hasattr(val, "isoformat") else val) for key, val in r.items() if key not in ("closed_at", "is_us", "duplicate_of")}
+        r = {key: (val.isoformat() if hasattr(val, "isoformat") else val) for key, val in r.items() if key not in ("closed_at", "is_us", "duplicate_of", "last_seen")}
         r["vector"] = [round(float(x), 5) for x in jobs[index[jid]]]
         out_jobs.append(r)
     closed = sorted(j for j in held if j not in rows or rows[j].get("closed_at") is not None or rows[j].get("is_us") is not True)
-    return {"jobs": out_jobs, "closed": closed,
+    return {"jobs": out_jobs, "closed": closed, "closed_detail": [closure(j, rows.get(j)) for j in closed],
+            "seen": {j: iso(rows[j].get("last_seen")) for j in sorted(held - set(closed)) if iso(rows[j].get("last_seen"))},
             "stats": {"users": len(pids), "fleet_jobs": len(ids), "picked": len(wanted), "sent": len(out_jobs),
                       "held": len(held), "closed": len(closed)}}

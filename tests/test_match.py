@@ -55,6 +55,24 @@ def test_run_sends_matches_with_vectors_and_reports_closed(tmp_path: Path):
     assert out["stats"]["users"] == 1                              # a malformed vector is ignored
 
 
+def test_run_says_why_each_shown_job_closed_and_when_open_ones_were_seen(tmp_path: Path):
+    vectors = write_vectors(tmp_path / "v.parquet", {"j1": unit(0)})
+    state = write_state(tmp_path / "s.parquet", [
+        {"job_id": "open1", "title": "a", "company_name": "Acme", "url": "https://acme.com/1", "is_us": True,
+         "last_seen": "2026-10-20T08:00:00+00:00"},
+        {"job_id": "down1", "title": "b", "company_name": "Acme", "url": "https://acme.com/2", "is_us": True,
+         "closed_at": "2026-10-19T09:00:00+00:00", "last_seen": "2026-10-18T09:00:00+00:00"},
+        {"job_id": "abroad", "title": "c", "company_name": "Acme", "url": "https://acme.com/3", "is_us": False},
+    ])
+    out = M.run(vectors, state, {"candidates": [], "held": ["open1", "down1", "abroad", "gone"]}, k=1)
+    reasons = {c["id"]: c for c in out["closed_detail"]}
+    # Only a job missing from a successful board read is a takedown, with its real time.
+    assert reasons["down1"] == {"id": "down1", "reason": "taken_down", "at": "2026-10-19T09:00:00+00:00"}
+    assert reasons["abroad"]["reason"] == "not_us"
+    assert reasons["gone"]["reason"] == "missing"
+    assert out["seen"] == {"open1": "2026-10-20T08:00:00+00:00"}
+
+
 def test_second_slot_skips_only_an_already_matched_inbox():
     from matcher.cli import already_matched
     assert already_matched({"exported_at": "2026-10-11T17:50:06Z"}, "2026-10-11T17:50:06Z")
