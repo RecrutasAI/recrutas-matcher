@@ -62,7 +62,8 @@ def main() -> int:
     print(json.dumps(result["stats"]))
     out = Path(tempfile.mkdtemp()) / "latest.json.gz"
     payload = {"generated_at": datetime.now(UTC).isoformat(), "inbox_exported_at": inbox.get("exported_at"),
-               "jobs": result["jobs"], "closed": result["closed"], "dates": dates, "stats": result["stats"]}
+               "jobs": result["jobs"], "closed": result["closed"], "closed_detail": result["closed_detail"],
+               "seen": result["seen"], "dates": dates, "stats": result["stats"]}
     with gzip.open(out, "wt", encoding="utf-8") as f:
         json.dump(payload, f)
     print(f"outbox: {out.stat().st_size // 1024} KB")
