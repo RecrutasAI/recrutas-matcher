@@ -41,7 +41,7 @@ def _money(v: float) -> str:
     return f"${v:,.2f}".replace(".00", "") if v < 1000 else f"${v:,.0f}"
 
 
-FOREIGN = re.compile(r"[€£¥₹]|\b(?:C|A|MX|NZ|HK|S|R)\$|\b(CAD|EUR|GBP|AUD|MXN|INR|NZD|HKD|SGD)\b", re.IGNORECASE)
+FOREIGN = re.compile(r"[€£¥₹]|\b(?:CA|AU|C|A|MX|NZ|HK|S|R)\s?\$|\b(CAD|EUR|GBP|AUD|MXN|INR|NZD|HKD|SGD)\b", re.IGNORECASE)
 
 
 def _pay(r: dict) -> str | None:
@@ -54,7 +54,7 @@ def _pay(r: dict) -> str | None:
         return s
     if currency != "USD":
         return None
-    lo, hi = r.get("salary_min") or None, r.get("salary_max") or None  # 0 means not stated
+    lo, hi = (v if isinstance(v, (int, float)) and v == v and v > 0 else None for v in (r.get("salary_min"), r.get("salary_max")))  # 0 or NaN: not stated
     if lo is None and hi is None:
         return None
     per = PERIODS.get((r.get("salary_period") or "").lower(), "")
@@ -97,7 +97,7 @@ def focus_jobs(state: Path, recrutas: dict, now: datetime | None = None) -> dict
         return {}
     now = now or datetime.now(UTC)
     fresh_after, new_after = now - timedelta(days=3), now - timedelta(days=7)
-    third = {n.strip().lower() for n in recrutas.get("third_party_companies", [])}
+    third = {n.strip().lower() for n in recrutas.get("third_party_companies") or [] if isinstance(n, str)}
     unnamed = re.compile(recrutas.get("unnamed_employer") or r"(?!)", re.IGNORECASE)
     any_place = set().union(*wanted.values())
     cities = pa.array(sorted({c for c, _ in any_place}))
@@ -105,6 +105,8 @@ def focus_jobs(state: Path, recrutas: dict, now: datetime | None = None) -> dict
     out = {slug: {"live": 0, "new_week": 0, "jobs": []} for slug in wanted}
     f = pq.ParquetFile(state)
     cols = [c for c in COLUMNS if c in f.schema_arrow.names]
+    if not {"city", "us_state", "url", "title", "company_name", "last_seen"} <= set(cols):
+        raise ValueError(f"state is missing columns focus pages need: {sorted({'city', 'us_state', 'url', 'title', 'company_name', 'last_seen'} - set(cols))}")
     for batch in f.iter_batches(batch_size=50_000, columns=cols):
         t = pa.Table.from_batches([batch])
         # The towns first, in Arrow: only those rows (and their descriptions) become Python objects.

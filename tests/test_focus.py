@@ -55,6 +55,8 @@ def test_pay_only_in_dollars_and_as_stated():
     assert _pay({**base, "salary_min": 30.0, "salary_max": 24.0}) == "$24 to $30 an hour"
     assert _pay({**base, "salary_summary": "DOE", "salary_min": 24.0, "salary_max": 30.0}) == "$24 to $30 an hour"
     assert _pay({**base, "salary_summary": "C$45 - C$55 an hour", "salary_currency": "CAD"}) is None
+    assert _pay({**base, "salary_summary": "CA$45 - CA$55 an hour", "salary_currency": None}) is None
+    assert _pay({**base, "salary_min": 24.0, "salary_max": float("nan")}) == "$24 an hour"
     assert _pay({**base, "salary_min": 40.0, "salary_max": 50.0, "salary_currency": "CAD"}) is None
     assert _pay({**base, "salary_min": 40.0, "salary_max": 50.0, "salary_currency": None}) is None
     assert _pay({**base, "salary_summary": "€45,000 - €55,000"}) is None
