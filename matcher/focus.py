@@ -9,6 +9,7 @@ column is empty or names another of its locations isn't counted.
 """
 from __future__ import annotations
 
+import math
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -54,7 +55,7 @@ def _pay(r: dict) -> str | None:
         return s
     if currency != "USD":
         return None
-    lo, hi = (v if isinstance(v, (int, float)) and v == v and v > 0 else None for v in (r.get("salary_min"), r.get("salary_max")))  # 0 or NaN: not stated
+    lo, hi = (v if isinstance(v, (int, float)) and not math.isnan(v) and v > 0 else None for v in (r.get("salary_min"), r.get("salary_max")))  # 0 or NaN: not stated
     if lo is None and hi is None:
         return None
     per = PERIODS.get((r.get("salary_period") or "").lower(), "")
