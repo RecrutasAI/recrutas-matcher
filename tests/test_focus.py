@@ -51,13 +51,16 @@ def test_no_focus_pages_no_work(tmp_path: Path):
 def test_pay_only_in_dollars_and_as_stated():
     from matcher.focus import _pay
     base = {"salary_summary": None, "salary_currency": "USD", "salary_period": "hour"}
-    assert _pay({**base, "salary_min": 0.0, "salary_max": 50.0}) == "$0 to $50 an hour"
+    assert _pay({**base, "salary_min": 0.0, "salary_max": 50.0}) == "up to $50 an hour"
+    assert _pay({**base, "salary_min": 30.0, "salary_max": 24.0}) == "$24 to $30 an hour"
+    assert _pay({**base, "salary_summary": "DOE", "salary_min": 24.0, "salary_max": 30.0}) == "$24 to $30 an hour"
+    assert _pay({**base, "salary_summary": "C$45 - C$55 an hour", "salary_currency": "CAD"}) is None
     assert _pay({**base, "salary_min": 40.0, "salary_max": 50.0, "salary_currency": "CAD"}) is None
     assert _pay({**base, "salary_min": 40.0, "salary_max": 50.0, "salary_currency": None}) is None
     assert _pay({**base, "salary_summary": "€45,000 - €55,000"}) is None
     assert _pay({**base, "salary_summary": "$45,000 - $55,000 a year"}) == "$45,000 - $55,000 a year"
     assert _pay({**base, "salary_summary": "USD 22–28 / hour"}) == "USD 22–28 / hour"
-    assert _pay({**base, "salary_summary": "DOE"}) is None
+    assert _pay({**base, "salary_summary": "DOE", "salary_min": None, "salary_max": None}) is None
 
 
 def test_job_board_links_and_bad_places_are_left_out(tmp_path: Path):

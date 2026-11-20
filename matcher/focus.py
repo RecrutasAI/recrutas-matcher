@@ -3,7 +3,7 @@
 Recrutas sends each page's towns in the links document ({"focus": [{"slug", "places": [[city, state]]}]})
 and its rules for who isn't a real employer (third-party companies, the unnamed-employer pattern), so
 both sides filter the same way. Recrutas picks and orders what to show (job types, pay, staffing
-firms); this only selects by place and freshness and returns the fields a page shows, plus counts.
+firms; third-party companies are left out here, as in the homepage count); this only selects by place and freshness and returns the fields a page shows, plus counts.
 Places are matched on the Fleet's city and state columns, so `live` is a floor: a job whose city
 column is empty or names another of its locations isn't counted.
 """
@@ -41,22 +41,27 @@ def _money(v: float) -> str:
     return f"${v:,.2f}".replace(".00", "") if v < 1000 else f"${v:,.0f}"
 
 
+FOREIGN = re.compile(r"[€£¥₹]|\b(?:C|A|MX|NZ|HK|S|R)\$|\b(CAD|EUR|GBP|AUD|MXN|INR|NZD|HKD|SGD)\b", re.IGNORECASE)
+
+
 def _pay(r: dict) -> str | None:
-    """The posting's own pay words when they are in dollars, else its range as stated (USD only)."""
+    """Pay as the posting states it, in US dollars only: its own words when they are dollars
+    ("$22 to $28 an hour", "USD 22–28 / hour"), else its structured US range. A 0 is unstated
+    ("up to $30"), never "$0"."""
     s = (r.get("salary_summary") or "").strip()
-    if s:
-        # "$22 to $28 an hour" or "USD 22–28 / hour"; never "DOE" or another currency.
-        dollars = "$" in s or re.search(r"\bUSD\b", s, re.IGNORECASE)
-        return s if dollars and not re.search(r"[€£¥₹]|\b(CAD|EUR|GBP|AUD|MXN|INR)\b", s) else None
-    lo, hi = r.get("salary_min"), r.get("salary_max")
+    currency = (r.get("salary_currency") or "").upper()
+    if s and ("$" in s or re.search(r"\bUSD\b", s, re.IGNORECASE)) and not FOREIGN.search(s) and currency in ("", "USD"):
+        return s
+    if currency != "USD":
+        return None
+    lo, hi = r.get("salary_min") or None, r.get("salary_max") or None  # 0 means not stated
     if lo is None and hi is None:
         return None
-    if (r.get("salary_currency") or "").upper() != "USD":
-        return None
     per = PERIODS.get((r.get("salary_period") or "").lower(), "")
-    if lo is not None and hi is not None and lo != hi:
-        return f"{_money(lo)} to {_money(hi)}{per}"
-    return f"{_money(hi if lo is None else lo)}{per}"
+    if lo is not None and hi is not None:
+        lo, hi = min(lo, hi), max(lo, hi)
+        return f"{_money(lo)}{per}" if lo == hi else f"{_money(lo)} to {_money(hi)}{per}"
+    return f"up to {_money(hi)}{per}" if lo is None else f"{_money(lo)}{per}"
 
 
 def _pay_hint(description: str | None) -> str | None:
@@ -111,7 +116,7 @@ def focus_jobs(state: Path, recrutas: dict, now: datetime | None = None) -> dict
                 continue  # open, US, one copy, an employer's own link (as the feed); not remote
             place = ((r.get("city") or "").strip().lower(), (r.get("us_state") or "").strip().upper())
             name = (r.get("company_name") or "").strip()
-            if not name or name.lower() in third or unnamed.search(name) or not r.get("title"):
+            if not name or name.lower() in third or unnamed.search(name) or not (r.get("title") or "").strip():
                 continue
             seen = _when(r.get("last_seen"))
             if not seen or seen < fresh_after:
@@ -120,7 +125,7 @@ def focus_jobs(state: Path, recrutas: dict, now: datetime | None = None) -> dict
             pay = _pay(r)
             job = {"title": r["title"].strip(), "company": name, "location": (r.get("location") or "").strip() or None,
                    "pay": pay, "pay_hint": None if pay else _pay_hint(r.get("description")),
-                   "url": r.get("url") or r.get("apply_url"), "posted_at": posted.isoformat() if posted else None}
+                   "url": r.get("url") or r.get("apply_url"), "posted_at": posted.astimezone(UTC).isoformat() if posted else None}
             for slug, places in wanted.items():
                 if place in places:
                     page = out[slug]

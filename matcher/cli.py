@@ -51,7 +51,7 @@ def main() -> int:
     result = run(vectors, state, inbox)
     # The homepage's deduplicated count, when the server sent its own direct links.
     dates: dict[str, str] = {}
-    focus: dict = {}
+    focus: dict | None = None
     links_doc: dict = {}
     try:
         links_doc = json.loads(Path(hf_hub_download(MATCHER_DATASET, LINKS, repo_type="dataset", force_download=True)).read_text(encoding="utf-8"))
@@ -64,15 +64,18 @@ def main() -> int:
         print(f"catalog count / dates skipped: {type(e).__name__}")
     try:
         # Every open job in the towns of Recrutas's public focus pages (/jobs/pierce-care).
-        focus = focus_jobs(state, links_doc)
-        result["stats"]["focus"] = {slug: {"live": v["live"], "listed": len(v["jobs"])} for slug, v in focus.items()}
+        focus = focus_jobs(state, links_doc) if links_doc else None
+        if focus is not None:
+            result["stats"]["focus"] = {slug: {"live": v["live"], "listed": len(v["jobs"])} for slug, v in focus.items()}
     except Exception as e:  # noqa: BLE001 -- never block matching on the focus pages
         print(f"focus pages skipped: {type(e).__name__}")
     print(json.dumps(result["stats"]))
     out = Path(tempfile.mkdtemp()) / "latest.json.gz"
     payload = {"generated_at": datetime.now(UTC).isoformat(), "inbox_exported_at": inbox.get("exported_at"),
                "jobs": result["jobs"], "closed": result["closed"], "closed_detail": result["closed_detail"],
-               "seen": result["seen"], "dates": dates, "focus": focus, "stats": result["stats"]}
+               "seen": result["seen"], "dates": dates, "stats": result["stats"]}
+    if focus is not None:  # left out when it failed: Recrutas keeps each page's last good list
+        payload["focus"] = focus
     with gzip.open(out, "wt", encoding="utf-8") as f:
         json.dump(payload, f)
     print(f"outbox: {out.stat().st_size // 1024} KB")
