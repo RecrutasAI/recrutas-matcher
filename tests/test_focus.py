@@ -36,12 +36,33 @@ def test_open_fresh_jobs_in_the_towns_with_pay_and_counts(tmp_path: Path):
            "third_party_companies": ["collabera"], "unnamed_employer": "saasfaprod"}
     out = focus_jobs(state, rec, now=NOW)["pierce-care"]
     assert out["live"] == 3 and out["new_week"] == 2
-    assert [j["pay"] for j in out["jobs"]] == ["$24 to $30 an hour", "$45 to $60 per hour", None]
+    # Newest posting first.
+    assert [j["pay"] for j in out["jobs"]] == ["$24 to $30 an hour", None, "$45 to $60 per hour"]
     assert out["jobs"][0] == {"title": "Behavioral Health Technician", "company": "MultiCare", "location": "Tacoma, WA",
                               "pay": "$24 to $30 an hour", "pay_hint": None, "url": "https://jobs.lever.co/a/1",
                               "posted_at": "2026-11-18T00:00:00+00:00"}
-    assert out["jobs"][2]["pay_hint"] == "$22.50 - $28.00 per hour, plus a $500 bonus. | $28.00 per hour, plus a $500 bonus. | $500 bonus."
+    assert out["jobs"][1]["pay_hint"] == "$22.50 - $28.00 per hour, plus a $500 bonus."
 
 
 def test_no_focus_pages_no_work(tmp_path: Path):
     assert focus_jobs(tmp_path / "missing.parquet", {}) == {}
+
+
+def test_pay_only_in_dollars_and_as_stated():
+    from matcher.focus import _pay
+    base = {"salary_summary": None, "salary_currency": "USD", "salary_period": "hour"}
+    assert _pay({**base, "salary_min": 0.0, "salary_max": 50.0}) == "$0 to $50 an hour"
+    assert _pay({**base, "salary_min": 40.0, "salary_max": 50.0, "salary_currency": "CAD"}) is None
+    assert _pay({**base, "salary_min": 40.0, "salary_max": 50.0, "salary_currency": None}) is None
+    assert _pay({**base, "salary_summary": "€45,000 - €55,000"}) is None
+    assert _pay({**base, "salary_summary": "$45,000 - $55,000 a year"}) == "$45,000 - $55,000 a year"
+    assert _pay({**base, "salary_summary": "USD 22–28 / hour"}) == "USD 22–28 / hour"
+    assert _pay({**base, "salary_summary": "DOE"}) is None
+
+
+def test_job_board_links_and_bad_places_are_left_out(tmp_path: Path):
+    state = tmp_path / "s.parquet"
+    pq.write_table(pa.Table.from_pylist([row(), row(url="https://www.indeed.com/viewjob?jk=1")]), state)
+    rec = {"focus": [{"slug": "p", "places": [["tacoma", "WA"], ["oops", None], ["a", "b", "c"]]}, {"slug": "empty", "places": [[None, "WA"]]}]}
+    out = focus_jobs(state, rec, now=NOW)
+    assert list(out) == ["p"] and out["p"]["live"] == 1

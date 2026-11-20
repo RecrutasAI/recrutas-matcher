@@ -4,6 +4,8 @@ Recrutas sends each page's towns in the links document ({"focus": [{"slug", "pla
 and its rules for who isn't a real employer (third-party companies, the unnamed-employer pattern), so
 both sides filter the same way. Recrutas picks and orders what to show (job types, pay, staffing
 firms); this only selects by place and freshness and returns the fields a page shows, plus counts.
+Places are matched on the Fleet's city and state columns, so `live` is a floor: a job whose city
+column is empty or names another of its locations isn't counted.
 """
 from __future__ import annotations
 
@@ -15,10 +17,14 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-COLUMNS = ["url", "company_name", "title", "location", "city", "us_state", "salary_summary", "salary_min",
+from .match import first_cut
+
+COLUMNS = ["url", "apply_url", "company_name", "title", "location", "city", "us_state", "salary_summary", "salary_min",
            "salary_max", "salary_currency", "salary_period", "posted_at", "last_seen", "closed_at", "is_us",
            "duplicate_of", "is_remote", "description"]
-MAX_JOBS = 3000  # per page; a county has about a thousand
+MAX_JOBS = 3000  # per page, newest first; a county has about a thousand
+PERIODS = {"hour": " an hour", "hourly": " an hour", "year": " a year", "yearly": " a year", "annual": " a year",
+           "month": " a month", "week": " a week", "day": " a day"}
 
 
 def _when(v) -> datetime | None:
@@ -31,73 +37,98 @@ def _when(v) -> datetime | None:
     return d if d.tzinfo else d.replace(tzinfo=UTC)
 
 
+def _money(v: float) -> str:
+    return f"${v:,.2f}".replace(".00", "") if v < 1000 else f"${v:,.0f}"
+
+
 def _pay(r: dict) -> str | None:
-    """The posting's own pay words when it has them, else its range as stated (USD only)."""
+    """The posting's own pay words when they are in dollars, else its range as stated (USD only)."""
     s = (r.get("salary_summary") or "").strip()
     if s:
-        return s
+        # "$22 to $28 an hour" or "USD 22–28 / hour"; never "DOE" or another currency.
+        dollars = "$" in s or re.search(r"\bUSD\b", s, re.IGNORECASE)
+        return s if dollars and not re.search(r"[€£¥₹]|\b(CAD|EUR|GBP|AUD|MXN|INR)\b", s) else None
     lo, hi = r.get("salary_min"), r.get("salary_max")
-    if not lo and not hi:
+    if lo is None and hi is None:
         return None
-    if (r.get("salary_currency") or "USD").upper() != "USD":
+    if (r.get("salary_currency") or "").upper() != "USD":
         return None
-    per = {"hour": " an hour", "hourly": " an hour", "year": " a year", "yearly": " a year", "annual": " a year",
-           "month": " a month", "week": " a week", "day": " a day"}.get((r.get("salary_period") or "").lower(), "")
-    money = lambda v: f"${v:,.2f}".replace(".00", "") if v < 1000 else f"${v:,.0f}"
-    if lo and hi and lo != hi:
-        return f"{money(lo)} to {money(hi)}{per}"
-    return f"{money(lo or hi)}{per}"
+    per = PERIODS.get((r.get("salary_period") or "").lower(), "")
+    if lo is not None and hi is not None and lo != hi:
+        return f"{_money(lo)} to {_money(hi)}{per}"
+    return f"{_money(hi if lo is None else lo)}{per}"
 
 
 def _pay_hint(description: str | None) -> str | None:
-    """The bits of the description that start with "$" (at most 5, 70 characters each): Recrutas reads
-    pay from them with its own rules (server/lib/job-batch.ts payFromText), so the rules live in one place."""
+    """The bits of the description that start with "$" (at most 5, 70 characters each, not overlapping):
+    Recrutas reads pay from them with its own rules (server/lib/job-batch.ts payFromText), so the rules
+    live in one place."""
     if not description:
         return None
-    parts = [description[m.start():m.start() + 70].replace("\n", " ") for m in re.finditer(r"\$\s?\d", description)][:5]
+    parts, end = [], -1
+    for m in re.finditer(r"\$\s?\d", description):
+        if m.start() < end:
+            continue
+        parts.append(description[m.start():m.start() + 70].replace("\n", " "))
+        end = m.start() + 70
+        if len(parts) == 5:
+            break
     return " | ".join(parts) or None
+
+
+def _places(page: dict) -> set[tuple[str, str]]:
+    out = set()
+    for p in page.get("places") or []:
+        if isinstance(p, (list, tuple)) and len(p) == 2 and all(isinstance(x, str) and x.strip() for x in p):
+            out.add((p[0].strip().lower(), p[1].strip().upper()))
+    return out
 
 
 def focus_jobs(state: Path, recrutas: dict, now: datetime | None = None) -> dict:
     """{slug: {"live", "new_week", "jobs": [...]}} for each focus page in the links document."""
-    pages = recrutas.get("focus") or []
-    if not pages:
+    wanted = {p["slug"]: _places(p) for p in recrutas.get("focus") or [] if isinstance(p, dict) and p.get("slug")}
+    wanted = {slug: places for slug, places in wanted.items() if places}
+    if not wanted:
         return {}
     now = now or datetime.now(UTC)
     fresh_after, new_after = now - timedelta(days=3), now - timedelta(days=7)
     third = {n.strip().lower() for n in recrutas.get("third_party_companies", [])}
     unnamed = re.compile(recrutas.get("unnamed_employer") or r"(?!)", re.IGNORECASE)
-    wanted = {p["slug"]: {(c.strip().lower(), s.strip().upper()) for c, s in p.get("places", [])} for p in pages}
     any_place = set().union(*wanted.values())
+    cities = pa.array(sorted({c for c, _ in any_place}))
+    states = pa.array(sorted({s for _, s in any_place}))
     out = {slug: {"live": 0, "new_week": 0, "jobs": []} for slug in wanted}
     f = pq.ParquetFile(state)
     cols = [c for c in COLUMNS if c in f.schema_arrow.names]
-    for batch in f.iter_batches(batch_size=20_000, columns=cols):  # descriptions are large
+    for batch in f.iter_batches(batch_size=50_000, columns=cols):
         t = pa.Table.from_batches([batch])
-        keep = pc.and_(pc.is_null(t.column("closed_at")), pc.fill_null(pc.equal(t.column("is_us"), True), False))
-        if "duplicate_of" in t.column_names:
-            keep = pc.and_(keep, pc.is_null(t.column("duplicate_of")))
-        t = t.filter(keep)
+        # The towns first, in Arrow: only those rows (and their descriptions) become Python objects.
+        here = pc.and_(pc.fill_null(pc.is_in(pc.utf8_lower(pc.utf8_trim_whitespace(t.column("city"))), value_set=cities), False),
+                       pc.fill_null(pc.is_in(pc.utf8_upper(pc.utf8_trim_whitespace(t.column("us_state"))), value_set=states), False))
+        t = t.filter(here)
         for r in t.to_pylist():
+            if not first_cut(r) or r.get("is_remote"):
+                continue  # open, US, one copy, an employer's own link (as the feed); not remote
             place = ((r.get("city") or "").strip().lower(), (r.get("us_state") or "").strip().upper())
-            if place not in any_place or r.get("is_remote"):
-                continue
             name = (r.get("company_name") or "").strip()
-            if not name or name.lower() in third or unnamed.search(name) or not r.get("url") or not r.get("title"):
+            if not name or name.lower() in third or unnamed.search(name) or not r.get("title"):
                 continue
             seen = _when(r.get("last_seen"))
             if not seen or seen < fresh_after:
                 continue  # not seen on the employer's site in the last 3 days
             posted = _when(r.get("posted_at"))
+            pay = _pay(r)
+            job = {"title": r["title"].strip(), "company": name, "location": (r.get("location") or "").strip() or None,
+                   "pay": pay, "pay_hint": None if pay else _pay_hint(r.get("description")),
+                   "url": r.get("url") or r.get("apply_url"), "posted_at": posted.isoformat() if posted else None}
             for slug, places in wanted.items():
-                if place not in places:
-                    continue
-                page = out[slug]
-                page["live"] += 1
-                if posted and posted > new_after:
-                    page["new_week"] += 1
-                if len(page["jobs"]) < MAX_JOBS:
-                    page["jobs"].append({"title": r["title"].strip(), "company": name, "location": (r.get("location") or "").strip() or None,
-                                         "pay": _pay(r), "pay_hint": None if _pay(r) else _pay_hint(r.get("description")),
-                                         "url": r["url"], "posted_at": posted.isoformat() if posted else None})
+                if place in places:
+                    page = out[slug]
+                    page["live"] += 1
+                    if posted and posted > new_after:
+                        page["new_week"] += 1
+                    page["jobs"].append(job)
+    for page in out.values():
+        page["jobs"].sort(key=lambda j: j["posted_at"] or "", reverse=True)
+        del page["jobs"][MAX_JOBS:]
     return out
