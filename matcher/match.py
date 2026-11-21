@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import numpy as np
 import pyarrow as pa
@@ -22,8 +23,21 @@ JOB_COLUMNS = ["job_id", "title", "company_name", "location", "description", "ur
 # Staffing agencies are kept: Recrutas labels them third-party and shows them only when a person has
 # no direct matches (server/lib/third-party.ts). Links that point at a job board are dropped here,
 # since they would carry an ATS source into Recrutas.
-JOB_BOARD_HOSTS = re.compile(r"(linkedin|indeed|glassdoor|ziprecruiter|monster|simplyhired|dice|careerbuilder|wellfound|"
-                             r"builtin|jooble|adzuna|talent|jobgether|google|hiring\.?cafe|otta)\.(com|org|cafe)", re.IGNORECASE)
+# Read on the link's HOST only, whole labels: "?source=linkedin.com" in a Greenhouse link and hosts like
+# "acmetalent.com" are not job boards. Google's own careers pages (google.com/about/careers, and
+# GFiber's fiber.google.com/careers) are the employer; any other google.com link (Google for Jobs)
+# is a board. Measured 2026-11-21: the old rule dropped 1,788 open US jobs, all Google and GFiber.
+JOB_BOARD_HOSTS = re.compile(r"(^|\.)((linkedin|indeed|glassdoor|ziprecruiter|monster|simplyhired|dice|careerbuilder|wellfound|"
+                             r"builtin|jooble|adzuna|talent|jobgether|google|hiringcafe|otta)\.(com|org)|hiring\.cafe)$", re.IGNORECASE)
+GOOGLE_HOST = re.compile(r"(^|\.)google\.com$", re.IGNORECASE)
+
+
+def is_job_board(link: str) -> bool:
+    parts = urlsplit(link)
+    host = (parts.hostname or "").lower()
+    if GOOGLE_HOST.search(host) and "/careers/" in parts.path:
+        return False
+    return bool(JOB_BOARD_HOSTS.search(host))
 
 
 def load_vectors(path: Path) -> tuple[list[str], np.ndarray]:
@@ -74,7 +88,7 @@ def first_cut(row: dict) -> bool:
     if row.get("closed_at") is not None or row.get("is_us") is not True or row.get("duplicate_of"):
         return False
     link = row.get("url") or row.get("apply_url") or ""
-    return link.startswith("http") and not JOB_BOARD_HOSTS.search(link)
+    return link.startswith("http") and not is_job_board(link)
 
 
 def iso(v) -> str | None:
