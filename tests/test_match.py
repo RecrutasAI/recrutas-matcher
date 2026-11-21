@@ -88,6 +88,13 @@ def test_job_boards_are_read_on_the_host_only():
     # Google the employer, on its own careers site
     assert not is_job_board("https://www.google.com/about/careers/applications/jobs/results/1234567890-software-engineer")
     assert not is_job_board("https://fiber.google.com/careers/job?gh_jid=6219631004")
+    assert not is_job_board("https://careers.google.com/jobs/results/123")
+    assert is_job_board("https://www.google.com/search/careers/?q=nurse")
+    assert is_job_board("https://www.glassdoor.com.au/job/1")
+    assert is_job_board("https://www.google.com.au/search?ibp=htl;jobs")
+    assert is_job_board("https://uk.indeed.co.uk/viewjob?jk=1")
+    assert is_job_board("https://www.linkedin.com./jobs/view/1")
+    assert is_job_board("https://click.appcast.io/t?url=https://www.indeed.com/v")
     # a board named only in the query, or inside another host name
     assert not is_job_board("https://job-boards.greenhouse.io/acme/jobs/123?source=linkedin.com")
     assert not is_job_board("https://careers.acmetalent.com/jobs/1")
