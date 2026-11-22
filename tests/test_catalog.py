@@ -23,7 +23,7 @@ def test_counts_each_direct_us_job_once(tmp_path: Path):
     rec = {"link_keys": [link_key("https://jobs.lever.co/acme/1/?utm_source=li"), link_key("https://boards.greenhouse.io/beta/jobs/9")],
            "companies": ["acme", "beta"],
            "third_party_companies": ["collabera"], "unnamed_employer": "saasfaprod|oraclecloud\\\\.com"}
-    assert catalog(state, rec) == {"jobs": 3, "companies": 2, "recrutas": 2, "fleet": 2, "both": 1}
+    assert catalog(state, rec) == {"jobs": 3, "companies": 2, "recrutas": 2, "fleet": 2, "both": 1, "all_countries": 4}   # + Acme 4, open but not US
 
 
 def test_link_key_matches_recrutas():

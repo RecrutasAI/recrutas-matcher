@@ -40,23 +40,31 @@ def catalog(state: Path, recrutas: dict) -> dict:
     rec_links = set(recrutas.get("link_keys", []))
     companies = {c.strip().lower() for c in recrutas.get("companies", [])}
     fleet_links = set()
+    # Open jobs in every country, same rules but no US filter, for the "we track N open jobs, M of
+    # them in the US" line. Recrutas only shows US jobs; this is the Fleet's whole open catalog.
+    all_links = set()
     f = pq.ParquetFile(state)
     cols = [c for c in ("url", "company_name", "closed_at", "is_us", "duplicate_of") if c in f.schema_arrow.names]
     for batch in f.iter_batches(batch_size=100_000, columns=cols):
         t = pa.Table.from_batches([batch])
-        keep = pc.and_(pc.is_null(t.column("closed_at")), pc.fill_null(pc.equal(t.column("is_us"), True), False))
+        open_ = pc.is_null(t.column("closed_at"))
         if "duplicate_of" in t.column_names:  # the Fleet marks a job repeated by a second board (2026-10-11)
-            keep = pc.and_(keep, pc.is_null(t.column("duplicate_of")))
-        t = t.filter(keep)
-        for url, co in zip(t.column("url").to_pylist(), t.column("company_name").to_pylist()):
+            open_ = pc.and_(open_, pc.is_null(t.column("duplicate_of")))
+        t = t.filter(open_)
+        us = pc.fill_null(pc.equal(t.column("is_us"), True), False).to_pylist()
+        for url, co, is_us in zip(t.column("url").to_pylist(), t.column("company_name").to_pylist(), us):
             name = (co or "").strip()
             if not name or name.lower() in third or unnamed.search(name):
                 continue
-            fleet_links.add(link_key(url))
-            companies.add(name.lower())
+            key = link_key(url)
+            all_links.add(key)
+            if is_us:
+                fleet_links.add(key)
+                companies.add(name.lower())
     empty = link_key("")
     rec_links.discard(empty)
     fleet_links.discard(empty)
+    all_links.discard(empty)
     companies.discard("")
     return {"jobs": len(rec_links | fleet_links), "companies": len(companies), "recrutas": len(rec_links),
-            "fleet": len(fleet_links), "both": len(rec_links & fleet_links)}
+            "fleet": len(fleet_links), "both": len(rec_links & fleet_links), "all_countries": len(rec_links | all_links)}
